@@ -1,6 +1,6 @@
 import { NavLink, useNavigate, Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { Home, ListTodo, Calendar, BarChart3, Sparkles, UserCircle, LogOut, Menu, X, Moon, Sun } from 'lucide-react';
+import { Home, ListTodo, Calendar, BarChart3, Sparkles, UserCircle, LogOut, Menu, X, Moon, Sun, CheckCircle2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import MotivationalPopup from './MotivationalPopup';
 
@@ -19,6 +19,7 @@ export default function Layout({ children }) {
   const location = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
   const [themeError, setThemeError] = useState('');
+  const [notification, setNotification] = useState(null);
   const menuToggleRef = useRef(null);
   const navRef = useRef(null);
 
@@ -34,6 +35,19 @@ export default function Layout({ children }) {
       menuToggleRef.current?.focus();
     };
   }, [menuOpen]);
+
+  useEffect(() => {
+    const routeNotification = location.state?.notification;
+    if (!routeNotification) return;
+    setNotification(routeNotification);
+    navigate(`${location.pathname}${location.search}${location.hash}`, { replace: true, state: null });
+  }, [location.key, location.pathname, location.search, location.hash, location.state, navigate]);
+
+  useEffect(() => {
+    if (!notification) return undefined;
+    const timeoutId = window.setTimeout(() => setNotification(null), 6000);
+    return () => window.clearTimeout(timeoutId);
+  }, [notification]);
 
   const handleLogout = async () => {
     await logout();
@@ -120,6 +134,15 @@ export default function Layout({ children }) {
           </div>
         </header>
         {themeError && <div className="alert alert-warning py-2" role="alert">{themeError}</div>}
+        {notification && (
+          <div className="app-notification" role="status" aria-live="polite">
+            <CheckCircle2 size={19} aria-hidden="true" />
+            <span>{notification.message}</span>
+            <button type="button" onClick={() => setNotification(null)} aria-label="Dismiss notification">
+              <X size={17} aria-hidden="true" />
+            </button>
+          </div>
+        )}
         {children}
       </main>
       {menuOpen && <button type="button" className="mobile-nav-backdrop" aria-label="Close navigation menu" onClick={() => setMenuOpen(false)} />}

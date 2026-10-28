@@ -7,7 +7,7 @@
 
 The existing HabitPulseAI project was enhanced without replacing its architecture or existing authentication, habit, calendar, analytics, and AI features. The changes add responsive navigation and layouts, a reusable motivational quote popup, persistent user-scoped activity history, optional suggested habit templates, more complete habit cards, emoji and color selection, and calendar completion indicators.
 
-A subsequent dashboard and analytics pass added user-personalized daily views, completion controls, weekly saved-activity charts, selectable analytics ranges, schedule-based performance rates, and data-grounded insights. The final polish pass fixed root-level theme application and persistence, replaced calendar emojis with real completion indicators, and added a consistency heatmap, record-derived milestones, optional weekly coach reviews, and selected-range CSV export.
+A subsequent dashboard and analytics pass added user-personalized daily views, completion controls, weekly saved-activity charts, selectable analytics ranges, schedule-based performance rates, and data-grounded insights. The final polish pass fixed root-level theme application and persistence, replaced calendar emojis with real completion indicators, and added a consistency heatmap, record-derived milestones, optional weekly coach reviews, and selected-range CSV export. The latest pass adds complete calendar-based analytics ranges, schedule-aware monthly consistency, route-persistent authentication success notifications, and additional mobile layout refinements.
 
 ## Implemented improvements
 
@@ -67,10 +67,17 @@ A subsequent dashboard and analytics pass added user-personalized daily views, c
 - Summary metrics distinguish active habits from habits scheduled today. Today's rate is calculated as completed scheduled habits divided by scheduled active habits; when none are scheduled, the rate is shown as unavailable rather than a fabricated zero.
 - Today's habit rows support optimistic completion and undo, then refresh from the authenticated backend.
 - Weekly activity is grouped by the user's timezone and uses saved completion timestamps. The empty state is shown when there is no completion history.
-- Analytics offers 7-day, 30-day, and all-available-history ranges. The backend validates the range, scopes records to the authenticated user, excludes future days, and computes scheduled-day denominators using each habit's timezone, start date, and weekly schedule.
+- Analytics offers Last 7 Days, Last 30 Days, This Month, Last Month, Last 3 Months (the current and previous two calendar months), This Year, and All Available History. Summary metrics, daily trends, per-habit performance, activity, and CSV export share the selected inclusive date boundaries; the backend validates each range, scopes records to the authenticated user, and excludes future records.
+- Monthly consistency groups actual saved occurrences by calendar month. Completion rates use only habit-days scheduled by each currently active habit's stored frequency, weekday schedule, and start date; no rate is shown when a month has no eligible scheduled days. Months without completions but with eligible scheduled days display a real zero rather than being omitted or fabricated.
 - Habit mix shows active-habit counts by stored category. Performance rows are ranked by scheduled-day completion rate; habits with no scheduled days display N/A.
 - Insights are based on saved completions and require a minimum of three scheduled days before making a per-habit consistency claim.
 - Current streaks and longest streaks are calculated from scheduled dates and completion keys, avoiding server-local date iteration.
+
+### Authentication feedback and responsive refinements
+
+- Successful login and registration navigate with a short-lived route notification; the shared app shell displays it accessibly and clears the navigation state so refreshes do not replay the message.
+- Login and registration prevent duplicate submissions, expose a pending button label, associate form labels with inputs, and show server or network failures without navigating.
+- Reused the existing responsive sidebar and breakpoints, with targeted mobile refinements for authentication card sizing, analytics controls/charts, and notifications. No new UI dependency was added.
 
 ## Files changed or added
 
@@ -79,6 +86,7 @@ A subsequent dashboard and analytics pass added user-personalized daily views, c
 - `client/src/components/MotivationalPopup.jsx`
 - `client/src/components/MotivationalPopup.test.jsx`
 - `client/src/pages/AnalyticsPage.test.jsx`
+- `client/src/pages/AuthPages.test.jsx`
 - `client/src/pages/DashboardPage.test.jsx`
 - `client/src/data/motivationalQuotes.js`
 - `client/src/data/suggestedHabits.js`
@@ -104,6 +112,8 @@ A subsequent dashboard and analytics pass added user-personalized daily views, c
 - `server/src/utils/validation.js`
 - `server/test/server.test.js`
 - `client/src/pages/AnalyticsPage.jsx`
+- `client/src/pages/LoginPage.jsx`
+- `client/src/pages/RegisterPage.jsx`
 - `client/index.html`
 - `client/src/context/AuthContext.jsx`
 - `client/src/pages/ProfilePage.jsx`
@@ -129,14 +139,14 @@ npm --workspace client exec vitest run
 npm --workspace client run build
 ```
 
-Results:
+Latest results:
 
-- Backend: **2 test files passed; 10 tests passed**.
-- Frontend: **8 test files passed; 9 tests passed**.
+- Backend: **2 test files passed; 11 tests passed**.
+- Frontend: **9 test files passed; 13 tests passed**.
 - Production frontend build: **succeeded**.
 - Vite reports that the minified JavaScript bundle exceeds 500 kB. This is a non-fatal bundle-size warning.
 - Frontend test output includes React Router future-flag warnings; tests pass.
-- A browser check confirmed document-root light/dark switching and local preference persistence. Authenticated calendar and mobile/tablet layouts were not manually inspected in a browser; automated tests cover the review, export, heatmap, milestones, theme persistence, and calendar indicators.
+- `git diff --check` passed. Date-range and monthly schedule calculations, analytics period selection, and authentication success/failure states are covered by tests. A manual browser review of mobile/tablet layouts was not performed in this pass.
 
 ## Run locally
 
@@ -159,6 +169,7 @@ If the backend reports `EADDRINUSE` on port 5000, another server process is alre
 - Historical activity before this enhancement is not reconstructed.
 - Activity persistence across server restarts depends on MongoDB being configured and available.
 - Analytics uses each habit's current schedule when interpreting its historical completion rate; prior schedule edits are not versioned, so past denominators cannot be reconstructed exactly.
+- All Available History begins at the earliest currently active habit start date; records for deleted or inactive habits are not included in selected-range performance/export.
 - The consistency heatmap displays a rolling 52-week window. A schedule-based streak achievement is intentionally omitted because historical schedule changes cannot be verified.
 - Achievements are derived from current saved records rather than stored award events; deleting a habit can reduce milestone progress under the existing completion-deletion behavior.
 - Responsive CSS and UI interactions are covered by tests/build, but a manual browser check at mobile, tablet, and desktop dimensions is still recommended.

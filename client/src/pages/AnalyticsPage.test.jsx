@@ -17,6 +17,8 @@ vi.mock('recharts', () => {
   return {
     ResponsiveContainer: Chart,
     LineChart: Chart,
+    BarChart: Chart,
+    Bar: Element,
     Line: Element,
     XAxis: Element,
     YAxis: Element,
@@ -31,11 +33,13 @@ vi.mock('recharts', () => {
 const createSummary = (overrides = {}) => ({
   period: '7',
   periodStartKey: '2026-10-22',
+  periodEndKey: '2026-10-28',
   todayKey: '2026-10-28',
   activeHabits: 1,
   stats: {
     totalCompletions: 2,
     totalScheduledDays: 7,
+    totalScheduledCompletions: 2,
     completionRate: 29,
     mostConsistentHabit: null,
     mostConsistentRate: null,
@@ -54,6 +58,15 @@ const createSummary = (overrides = {}) => ({
     currentStreak: 0,
   }],
   trend: [{ dateKey: '2026-10-28', label: 'Oct 28', day: 'Wed', isToday: true, value: 1 }],
+  monthlyConsistency: [{
+    monthKey: '2026-10',
+    label: 'Oct 2026',
+    completions: 2,
+    scheduledDays: 7,
+    scheduledCompletions: 2,
+    completionRate: 29,
+    hasTrackingData: true,
+  }],
   heatmap: {
     startKey: '2026-10-22',
     endKey: '2026-10-28',
@@ -97,11 +110,17 @@ describe('AnalyticsPage', () => {
     expect(screen.getByRole('grid', { name: /daily saved completion activity/i })).toBeInTheDocument();
     expect(screen.getByRole('gridcell', { name: /2026-10-23: 1 saved completion/i })).toBeInTheDocument();
     expect(screen.getByText('First step')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Monthly consistency' })).toBeInTheDocument();
+    expect(screen.getByText(/A zero bar means scheduled tracking with no saved completions/)).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'This Month' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Last Month' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Last 3 Months' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'This Year' })).toBeInTheDocument();
 
-    fireEvent.change(screen.getByRole('combobox', { name: 'Analytics date range' }), { target: { value: '30' } });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Analytics date range' }), { target: { value: 'last-month' } });
     await waitFor(() => expect(axios.get).toHaveBeenLastCalledWith(
       '/analytics/summary',
-      expect.objectContaining({ params: { period: '30' } })
+      expect.objectContaining({ params: { period: 'last-month' } })
     ));
   });
 
@@ -112,6 +131,7 @@ describe('AnalyticsPage', () => {
         stats: {
           totalCompletions: 0,
           totalScheduledDays: 0,
+          totalScheduledCompletions: 0,
           completionRate: null,
           mostConsistentHabit: null,
           mostConsistentRate: null,
@@ -120,6 +140,7 @@ describe('AnalyticsPage', () => {
         habitMix: [],
         performance: [],
         trend: [],
+        monthlyConsistency: [],
         heatmap: { hasHistory: false, days: [] },
         achievements: [],
         insights: [],

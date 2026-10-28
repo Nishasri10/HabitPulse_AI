@@ -144,26 +144,101 @@ describe('HabitPulseAI API', () => {
       .set('Cookie', registerResponse.headers['set-cookie']);
 
     expect(response.status).toBe(400);
-    expect(response.body.message).toMatch(/Period must be/);
+    expect(response.body.message).toMatch(/supported analytics date range/);
   });
 
-  it('supports 7-day, 30-day, and all-history analytics ranges', async () => {
+  it('supports all analytics ranges and uses calendar-month boundaries', async () => {
     const email = `ranges${Date.now()}@example.com`;
     const registerResponse = await request(app)
       .post('/api/auth/register')
       .send({ name: 'Range User', email, password: 'secret123', timezone: 'UTC' });
 
-    for (const period of ['7', '30', 'all']) {
+    const now = new Date();
+    const todayKey = now.toISOString().slice(0, 10);
+    const monthStartKey = `${todayKey.slice(0, 7)}-01`;
+    const previousMonthEnd = new Date(`${monthStartKey}T00:00:00.000Z`);
+    previousMonthEnd.setUTCDate(previousMonthEnd.getUTCDate() - 1);
+    const previousMonthEndKey = previousMonthEnd.toISOString().slice(0, 10);
+    const previousMonthStartKey = `${previousMonthEndKey.slice(0, 7)}-01`;
+    const threeMonthsStartDate = new Date(`${monthStartKey}T00:00:00.000Z`);
+    threeMonthsStartDate.setUTCMonth(threeMonthsStartDate.getUTCMonth() - 2);
+    const threeMonthsStartKey = threeMonthsStartDate.toISOString().slice(0, 10);
+    const expectedTrendDays = (startKey, endKey) => Math.round(
+      (new Date(`${endKey}T00:00:00.000Z`) - new Date(`${startKey}T00:00:00.000Z`)) / 86400000
+    ) + 1;
+    const expectedRanges = {
+      '7': [new Date(now.getTime() - 6 * 86400000).toISOString().slice(0, 10), todayKey],
+      '30': [new Date(now.getTime() - 29 * 86400000).toISOString().slice(0, 10), todayKey],
+      'this-month': [monthStartKey, todayKey],
+      'last-month': [previousMonthStartKey, previousMonthEndKey],
+      '3-months': [threeMonthsStartKey, todayKey],
+      'this-year': [`${todayKey.slice(0, 4)}-01-01`, todayKey],
+      all: [todayKey, todayKey],
+    };
+
+    for (const period of Object.keys(expectedRanges)) {
       const response = await request(app)
         .get('/api/analytics/summary')
         .query({ period })
         .set('Cookie', registerResponse.headers['set-cookie']);
       expect(response.status).toBe(200);
       expect(response.body.period).toBe(period);
+      expect(response.body.periodStartKey).toBe(expectedRanges[period][0]);
+      expect(response.body.periodEndKey).toBe(expectedRanges[period][1]);
       expect(response.body.stats.completionRate).toBeNull();
-      expect(response.body.trend.length).toBe(period === '7' ? 7 : period === '30' ? 30 : 0);
+      expect(response.body.trend.length).toBe(period === 'all' ? 0 : expectedTrendDays(...expectedRanges[period]));
       expect(response.body.trend.every((day) => day.value === 0)).toBe(true);
     }
+  });
+
+  it('calculates monthly completion rates from scheduled habit-days in the selected range', async () => {
+    const email = `monthly${Date.now()}@example.com`;
+    const registerResponse = await request(app)
+      .post('/api/auth/register')
+      .send({ name: 'Monthly User', email, password: 'secret123', timezone: 'UTC' });
+    const todayKey = new Date().toISOString().slice(0, 10);
+    const monthStartKey = `${todayKey.slice(0, 7)}-01`;
+    const habitResponse = await request(app)
+      .post('/api/habits')
+      .set('Cookie', registerResponse.headers['set-cookie'])
+      .send({ name: 'Daily reading', frequency: 'daily', startDate: monthStartKey });
+    expect(habitResponse.status).toBe(201);
+    const weeklyHabitResponse = await request(app)
+      .post('/api/habits')
+      .set('Cookie', registerResponse.headers['set-cookie'])
+      .send({
+        name: 'Weekly exercise',
+        frequency: 'weekly',
+        scheduledWeekdays: [1],
+        startDate: monthStartKey,
+      });
+    expect(weeklyHabitResponse.status).toBe(201);
+
+    const completionResponse = await request(app)
+      .post(`/api/habits/${habitResponse.body.habit._id}/complete`)
+      .set('Cookie', registerResponse.headers['set-cookie'])
+      .send({ date: `${todayKey}T12:00:00.000Z` });
+    expect(completionResponse.status).toBe(201);
+
+    const summaryResponse = await request(app)
+      .get('/api/analytics/summary')
+      .query({ period: 'this-month' })
+      .set('Cookie', registerResponse.headers['set-cookie']);
+    const month = summaryResponse.body.monthlyConsistency[0];
+    let mondaysThisMonth = 0;
+    for (let day = 1; day <= Number(todayKey.slice(8, 10)); day += 1) {
+      const date = new Date(`${todayKey.slice(0, 7)}-${String(day).padStart(2, '0')}T00:00:00.000Z`);
+      if (date.getUTCDay() === 1) mondaysThisMonth += 1;
+    }
+    expect(summaryResponse.status).toBe(200);
+    expect(month.monthKey).toBe(todayKey.slice(0, 7));
+    expect(month.completions).toBe(1);
+    expect(month.scheduledDays).toBe(Number(todayKey.slice(8, 10)) + mondaysThisMonth);
+    expect(month.scheduledCompletions).toBe(1);
+    expect(month.completionRate).toBe(Math.round((1 / month.scheduledDays) * 100));
+    expect(month.hasTrackingData).toBe(true);
+    expect(summaryResponse.body.stats.totalCompletions).toBe(1);
+    expect(summaryResponse.body.stats.totalScheduledCompletions).toBe(1);
   });
 
   it('returns real heatmap and achievement data, a scheduled weekly review, and a scoped CSV export', async () => {

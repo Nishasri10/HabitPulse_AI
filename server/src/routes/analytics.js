@@ -4,7 +4,7 @@ import { getDateKey } from '../utils/streak.js';
 import { generateWeeklyReviewGuidance } from '../utils/aiService.js';
 
 const router = express.Router();
-const allowedPeriods = new Set(['7', '30', 'all']);
+const allowedPeriods = new Set(['7', '30', 'this-month', 'last-month', '3-months', 'this-year', 'all']);
 const dayLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 const dateFromKey = (key) => new Date(`${key}T00:00:00.000Z`);
@@ -18,6 +18,38 @@ const shiftDateKey = (key, amount) => {
   const date = dateFromKey(key);
   date.setUTCDate(date.getUTCDate() + amount);
   return date.toISOString().slice(0, 10);
+};
+
+const getAnalyticsRange = (period, todayKey, habits) => {
+  const currentMonthStart = `${todayKey.slice(0, 7)}-01`;
+  const previousMonthEnd = shiftDateKey(currentMonthStart, -1);
+  const previousMonthStart = `${previousMonthEnd.slice(0, 7)}-01`;
+  const twoMonthsAgo = shiftDateKey(currentMonthStart, -1);
+  const threeMonthRangeStart = `${shiftDateKey(`${twoMonthsAgo.slice(0, 7)}-01`, -1).slice(0, 7)}-01`;
+  const earliestHabit = [...habits].sort(
+    (a, b) => getHabitStartKey(a).localeCompare(getHabitStartKey(b))
+  )[0];
+  const allHistoryStart = earliestHabit ? getHabitStartKey(earliestHabit) : todayKey;
+  const ranges = {
+    '7': shiftDateKey(todayKey, -6),
+    '30': shiftDateKey(todayKey, -29),
+    'this-month': currentMonthStart,
+    'last-month': previousMonthStart,
+    '3-months': threeMonthRangeStart,
+    'this-year': `${todayKey.slice(0, 4)}-01-01`,
+    all: allHistoryStart,
+  };
+  return {
+    startKey: ranges[period],
+    endKey: period === 'last-month' ? previousMonthEnd : todayKey,
+  };
+};
+
+const getMonthKey = (dateKey) => dateKey.slice(0, 7);
+const getNextMonthKey = (monthKey) => {
+  const date = dateFromKey(`${monthKey}-01`);
+  date.setUTCMonth(date.getUTCMonth() + 1);
+  return date.toISOString().slice(0, 7);
 };
 
 const getWeekStartKey = (key) => shiftDateKey(key, -dateFromKey(key).getUTCDay());
@@ -110,20 +142,25 @@ const buildHabitMix = (habits) => {
   return [...counts.entries()].map(([name, value]) => ({ name, value }));
 };
 
-const getHabitPeriodMetrics = (habit, completions, today, period) => {
+const getHabitPeriodMetrics = (habit, completions, today, range) => {
   const timezone = habit.timezone || 'UTC';
   const todayKey = getDateKey(today, timezone);
-  const habitStartKey = getDateKey(habit.startDate || habit.createdAt || today, timezone);
-  const periodStartKey = period === 'all' ? habitStartKey : shiftDateKey(todayKey, -(Number(period) - 1));
-  const startKey = periodStartKey > habitStartKey ? periodStartKey : habitStartKey;
+  const habitStartKey = getHabitStartKey(habit);
+  const startKey = range.startKey > habitStartKey ? range.startKey : habitStartKey;
+  const endKey = range.endKey < todayKey ? range.endKey : todayKey;
   const habitCompletionKeys = completions
-    .filter((entry) => String(entry.habitId) === String(habit._id))
+    .filter((entry) => String(entry.habitId) === String(habit._id)
+      && validDateKey(entry.localDateKey)
+      && entry.localDateKey <= todayKey)
     .map((entry) => entry.localDateKey);
   const completionKeys = new Set(habitCompletionKeys);
   let scheduledDays = 0;
   let completedDays = 0;
+  const completedOccurrences = new Set(
+    habitCompletionKeys.filter((key) => key >= startKey && key <= endKey)
+  ).size;
 
-  for (let key = startKey; key <= todayKey; key = shiftDateKey(key, 1)) {
+  for (let key = startKey; key <= endKey; key = shiftDateKey(key, 1)) {
     if (!isScheduledOnKey(habit, key)) continue;
     scheduledDays += 1;
     if (completionKeys.has(key)) completedDays += 1;
@@ -133,10 +170,11 @@ const getHabitPeriodMetrics = (habit, completions, today, period) => {
   return {
     scheduledDays,
     completedDays,
+    completedOccurrences,
     completionRate: scheduledDays ? Math.round((completedDays / scheduledDays) * 100) : null,
     ...streaks,
     periodStartKey: startKey,
-    todayKey,
+    periodEndKey: endKey,
   };
 };
 
@@ -145,28 +183,26 @@ const getCompletionDateKey = (completion, timezone) => {
   return completion.localDateKey;
 };
 
-const buildCompletionTrend = (completions, todayKey, timezone, period, startKey) => {
+const buildCompletionTrend = (completions, todayKey, period, range) => {
   const grouped = new Map();
-  const currentWeekStart = getWeekStartKey(todayKey);
-  const trendStart = period === 'all' ? startKey : shiftDateKey(todayKey, -(Number(period) - 1));
 
   for (const completion of completions) {
-    const key = getCompletionDateKey(completion, timezone);
-    if (key < trendStart || key > todayKey) continue;
+    const key = completion.localDateKey;
+    if (!validDateKey(key) || key < range.startKey || key > range.endKey) continue;
     const bucket = period === 'all' ? getWeekStartKey(key) : key;
     grouped.set(bucket, (grouped.get(bucket) || 0) + 1);
   }
 
   if (period === 'all') {
     if (!grouped.size) return [];
-    const firstWeek = getWeekStartKey(trendStart);
     const trend = [];
-    for (let key = firstWeek; key <= currentWeekStart; key = shiftDateKey(key, 7)) {
-      const formatted = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
-        .format(dateFromKey(key));
+    const firstWeek = getWeekStartKey(range.startKey);
+    const lastWeek = getWeekStartKey(range.endKey);
+    for (let key = firstWeek; key <= lastWeek; key = shiftDateKey(key, 7)) {
       trend.push({
         dateKey: key,
-        label: formatted,
+        label: new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
+          .format(dateFromKey(key)),
         value: grouped.get(key) || 0,
       });
     }
@@ -174,7 +210,7 @@ const buildCompletionTrend = (completions, todayKey, timezone, period, startKey)
   }
 
   const trend = [];
-  for (let key = trendStart; key <= todayKey; key = shiftDateKey(key, 1)) {
+  for (let key = range.startKey; key <= range.endKey; key = shiftDateKey(key, 1)) {
     const day = getWeekdayForDateKey(key);
     const label = new Intl.DateTimeFormat('en-US', {
       month: 'short',
@@ -190,6 +226,58 @@ const buildCompletionTrend = (completions, todayKey, timezone, period, startKey)
     });
   }
   return trend;
+};
+
+const buildMonthlyConsistency = (habits, completions, range, todayKey) => {
+  const byMonth = new Map();
+  const habitById = new Map(habits.map((habit) => [String(habit._id), habit]));
+  const occurrenceKeysByMonth = new Map();
+  const scheduledOccurrenceKeysByMonth = new Map();
+
+  for (const completion of completions) {
+    const key = completion.localDateKey;
+    const habit = habitById.get(String(completion.habitId));
+    if (!habit || !validDateKey(key) || key < range.startKey || key > range.endKey || key > todayKey) continue;
+    const monthKey = getMonthKey(key);
+    const occurrenceKey = `${String(completion.habitId)}:${key}`;
+    if (!occurrenceKeysByMonth.has(monthKey)) occurrenceKeysByMonth.set(monthKey, new Set());
+    occurrenceKeysByMonth.get(monthKey).add(occurrenceKey);
+    if (isScheduledOnKey(habit, key) && key >= getHabitStartKey(habit)) {
+      if (!scheduledOccurrenceKeysByMonth.has(monthKey)) scheduledOccurrenceKeysByMonth.set(monthKey, new Set());
+      scheduledOccurrenceKeysByMonth.get(monthKey).add(occurrenceKey);
+    }
+  }
+
+  const months = [];
+  for (let monthKey = getMonthKey(range.startKey); monthKey <= getMonthKey(range.endKey); monthKey = getNextMonthKey(monthKey)) {
+    const monthStartKey = `${monthKey}-01`;
+    const monthEndKey = shiftDateKey(getNextMonthKey(monthKey) + '-01', -1);
+    const startKey = range.startKey > monthStartKey ? range.startKey : monthStartKey;
+    const endKey = range.endKey < monthEndKey ? range.endKey : monthEndKey;
+    let scheduledDays = 0;
+    for (const habit of habits) {
+      const habitStartKey = getHabitStartKey(habit);
+      const habitRangeStart = startKey > habitStartKey ? startKey : habitStartKey;
+      for (let key = habitRangeStart; key <= endKey; key = shiftDateKey(key, 1)) {
+        if (isScheduledOnKey(habit, key)) scheduledDays += 1;
+      }
+    }
+    const completionsCount = occurrenceKeysByMonth.get(monthKey)?.size || 0;
+    if (!scheduledDays && !completionsCount) continue;
+    const date = dateFromKey(monthStartKey);
+    months.push({
+      monthKey,
+      label: new Intl.DateTimeFormat('en-US', { month: 'short', year: 'numeric', timeZone: 'UTC' }).format(date),
+      completions: completionsCount,
+      scheduledDays,
+      scheduledCompletions: scheduledOccurrenceKeysByMonth.get(monthKey)?.size || 0,
+      completionRate: scheduledDays
+        ? Math.round(((scheduledOccurrenceKeysByMonth.get(monthKey)?.size || 0) / scheduledDays) * 100)
+        : null,
+      hasTrackingData: scheduledDays > 0,
+    });
+  }
+  return months;
 };
 
 const buildWeeklyActivity = (completions, today, timezone) => {
@@ -277,7 +365,10 @@ const buildDashboardSummary = (habits, completions, activities = [], userTimezon
 
   const allHabitMetrics = activeHabits.map((habit) => ({
     habit,
-    metrics: getHabitPeriodMetrics(habit, completions, today, 'all'),
+    metrics: getHabitPeriodMetrics(habit, completions, today, {
+      startKey: getHabitStartKey(habit),
+      endKey: getDateKey(today, habit.timezone || 'UTC'),
+    }),
   }));
   const checklist = activeHabits
     .filter((habit) => {
@@ -419,7 +510,7 @@ router.get('/weekly-review', async (req, res) => {
 router.get('/export', async (req, res) => {
   const period = String(req.query.period || '7');
   if (!allowedPeriods.has(period)) {
-    return res.status(400).json({ message: 'Period must be 7, 30, or all.' });
+    return res.status(400).json({ message: 'Choose a supported analytics date range.' });
   }
 
   const [habits, completions, user] = await Promise.all([
@@ -432,20 +523,15 @@ router.get('/export', async (req, res) => {
   const todayKey = getDateKey(today, timezone);
   const activeHabits = habits.filter((habit) => habit.status === 'active' && !habit.archivedAt);
   const activeHabitIds = new Set(activeHabits.map((habit) => String(habit._id)));
-  const earliestHabit = [...activeHabits].sort(
-    (a, b) => new Date(a.startDate || a.createdAt || today) - new Date(b.startDate || b.createdAt || today)
-  )[0];
-  const periodStartKey = period === 'all'
-    ? earliestHabit ? getDateKey(earliestHabit.startDate || earliestHabit.createdAt || today, timezone) : todayKey
-    : shiftDateKey(todayKey, -(Number(period) - 1));
+  const range = getAnalyticsRange(period, todayKey, activeHabits);
   const habitById = new Map(activeHabits.map((habit) => [String(habit._id), habit]));
   const rows = completions
     .filter((completion) => {
       const completionKey = completion.localDateKey;
       return activeHabitIds.has(String(completion.habitId))
         && validDateKey(completionKey)
-        && completionKey >= periodStartKey
-        && completionKey <= todayKey;
+        && completionKey >= range.startKey
+        && completionKey <= range.endKey;
     })
     .map((completion) => {
       const habit = habitById.get(String(completion.habitId));
@@ -461,7 +547,7 @@ router.get('/export', async (req, res) => {
     ['Habit name', 'Category', 'Completion date', 'Status'].map(escapeCsv).join(','),
     ...rows.map((row) => row.map(escapeCsv).join(',')),
   ].join('\r\n');
-  const filename = `habitpulse-progress-${period === 'all' ? 'all' : `${period}-days`}.csv`;
+  const filename = `habitpulse-progress-${period}.csv`;
 
   return res
     .status(200)
@@ -477,7 +563,7 @@ router.get('/export', async (req, res) => {
 router.get('/summary', async (req, res) => {
   const period = String(req.query.period || '7');
   if (!allowedPeriods.has(period)) {
-    return res.status(400).json({ message: 'Period must be 7, 30, or all.' });
+    return res.status(400).json({ message: 'Choose a supported analytics date range.' });
   }
 
   const [habits, completions, activities, user] = await Promise.all([
@@ -494,48 +580,52 @@ router.get('/summary', async (req, res) => {
   const knownCompletions = completions.filter((completion) => knownHabitIds.has(String(completion.habitId)));
   const timezone = user?.timezone || 'UTC';
   const todayKey = getDateKey(today, timezone);
-  const earliestHabit = [...activeHabits].sort(
-    (a, b) => new Date(a.startDate || a.createdAt || today) - new Date(b.startDate || b.createdAt || today)
-  )[0];
-  const earliestHabitKey = earliestHabit
-    ? getDateKey(earliestHabit.startDate || earliestHabit.createdAt || today, timezone)
-    : todayKey;
-  const periodStartKey = period === 'all' ? earliestHabitKey : shiftDateKey(todayKey, -(Number(period) - 1));
+  const range = getAnalyticsRange(period, todayKey, activeHabits);
+  const activeHabitStartKeys = new Map(activeHabits.map((habit) => [String(habit._id), getHabitStartKey(habit)]));
+  const periodCompletions = activeCompletions.filter((completion) => validDateKey(completion.localDateKey)
+    && completion.localDateKey >= range.startKey
+    && completion.localDateKey <= range.endKey
+    && completion.localDateKey >= activeHabitStartKeys.get(String(completion.habitId)));
   const performance = activeHabits.map((habit) => {
-    const metrics = getHabitPeriodMetrics(habit, activeCompletions, today, period);
+    const metrics = getHabitPeriodMetrics(habit, activeCompletions, today, range);
     return {
       ...habit,
       ...metrics,
-      completions: metrics.completedDays,
+      completions: metrics.completedOccurrences,
     };
   }).sort((a, b) => {
     const rateDifference = (b.completionRate ?? -1) - (a.completionRate ?? -1);
     return rateDifference || b.completions - a.completions;
   });
-  const totalCompletions = performance.reduce((sum, habit) => sum + habit.completedDays, 0);
+  const totalCompletions = new Set(
+    periodCompletions.map((completion) => `${String(completion.habitId)}:${completion.localDateKey}`)
+  ).size;
+  const totalScheduledCompletions = performance.reduce((sum, habit) => sum + habit.completedDays, 0);
   const totalScheduledDays = performance.reduce((sum, habit) => sum + habit.scheduledDays, 0);
   const overallCompletionRate = totalScheduledDays
-    ? Math.round((totalCompletions / totalScheduledDays) * 100)
+    ? Math.round((totalScheduledCompletions / totalScheduledDays) * 100)
     : null;
   const mostConsistent = performance.find((habit) => habit.scheduledDays >= 3);
   const longestStreak = Math.max(...performance.map((habit) => habit.longestStreak || 0), 0);
-  const trend = buildCompletionTrend(activeCompletions, todayKey, timezone, period, periodStartKey);
+  const trend = buildCompletionTrend(periodCompletions, todayKey, period, range);
   const periodActivities = activities.filter((activity) => {
     const key = getDateKey(activity.occurredAt, timezone);
-    return key >= periodStartKey && key <= todayKey;
+    return key >= range.startKey && key <= range.endKey;
   });
 
   return res.json({
     period,
-    periodStartKey,
+    periodStartKey: range.startKey,
+    periodEndKey: range.endKey,
     todayKey,
     habits,
-    completions,
+    completions: periodCompletions,
     activities: periodActivities,
     total: habits.length,
     activeHabits: activeHabits.length,
     stats: {
       totalCompletions,
+      totalScheduledCompletions,
       totalScheduledDays,
       completionRate: overallCompletionRate,
       mostConsistentHabit: mostConsistent?.name || null,
@@ -544,6 +634,7 @@ router.get('/summary', async (req, res) => {
     },
     performance,
     trend,
+    monthlyConsistency: buildMonthlyConsistency(activeHabits, periodCompletions, range, todayKey),
     heatmap: buildCompletionHeatmap(knownCompletions, todayKey),
     achievements: buildAchievements(habits, knownCompletions, todayKey, timezone),
     habitMix: buildHabitMix(activeHabits),

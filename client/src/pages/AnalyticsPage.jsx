@@ -4,6 +4,8 @@ import {
   ResponsiveContainer,
   LineChart,
   Line,
+  BarChart,
+  Bar,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -17,7 +19,15 @@ import { Link } from 'react-router-dom';
 import { getHabitEmoji } from '../utils/habitPresentation';
 
 const COLORS = ['#8174BD', '#77A68C', '#739DC4', '#D7A66B', '#C77F85', '#7F9D9B', '#AB8EBB'];
-const periodLabels = { 7: 'Last 7 days', 30: 'Last 30 days', all: 'All available history' };
+const periodLabels = {
+  7: 'Last 7 Days',
+  30: 'Last 30 Days',
+  'this-month': 'This Month',
+  'last-month': 'Last Month',
+  '3-months': 'Last 3 Months',
+  'this-year': 'This Year',
+  all: 'All Available History',
+};
 
 const tooltipStyle = {
   border: '1px solid var(--border)',
@@ -101,7 +111,7 @@ export default function AnalyticsPage() {
       const url = URL.createObjectURL(response.data);
       const download = document.createElement('a');
       download.href = url;
-      download.download = `habitpulse-progress-${period === 'all' ? 'all' : `${period}-days`}.csv`;
+      download.download = `habitpulse-progress-${period}.csv`;
       document.body.append(download);
       download.click();
       download.remove();
@@ -136,7 +146,11 @@ export default function AnalyticsPage() {
             >
               <option value="7">Last 7 days</option>
               <option value="30">Last 30 days</option>
-              <option value="all">All available history</option>
+              <option value="this-month">This Month</option>
+              <option value="last-month">Last Month</option>
+              <option value="3-months">Last 3 Months</option>
+              <option value="this-year">This Year</option>
+              <option value="all">All Available History</option>
             </select>
           </label>
           <button type="button" className="btn btn-outline-primary analytics-export-button" onClick={exportCsv} disabled={exporting || loading}>
@@ -167,8 +181,9 @@ export default function AnalyticsPage() {
           <div className="analytics-period-summary">
             <span>{periodLabels[period]}</span>
             <span>
-              Tracking from {new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
-                .format(new Date(`${data.periodStartKey}T12:00:00`))}
+              {data.periodStartKey === data.periodEndKey
+                ? `Tracking on ${new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(`${data.periodStartKey}T12:00:00`))}`
+                : `Tracking ${new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(`${data.periodStartKey}T12:00:00`))} – ${new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(`${data.periodEndKey || data.todayKey}T12:00:00`))}`}
             </span>
           </div>
 
@@ -270,7 +285,7 @@ export default function AnalyticsPage() {
             <MetricCard
               title="Scheduled-day completion"
               value={completionRate === null ? '—' : `${completionRate}%`}
-              detail={`${data.stats.totalCompletions} completed of ${data.stats.totalScheduledDays} scheduled habit-days`}
+              detail={`${data.stats.totalScheduledCompletions || 0} completed of ${data.stats.totalScheduledDays} scheduled habit-days`}
               icon={<Target size={19} />}
               accent="lavender"
             />
@@ -396,6 +411,47 @@ export default function AnalyticsPage() {
                 </div>
               )}
             </article>
+          </section>
+
+          <section className="analytics-panel analytics-monthly-panel" aria-label="Monthly consistency">
+            <div className="analytics-panel-heading">
+              <div>
+                <span className="eyebrow">{periodLabels[period]}</span>
+                <h3>Monthly consistency</h3>
+              </div>
+            </div>
+            {data.monthlyConsistency?.length ? (
+              <>
+                <p className="analytics-monthly-caption">
+                  Saved completions by calendar month. A zero bar means scheduled tracking with no saved completions; months without scheduled tracking are omitted.
+                </p>
+                <div className="analytics-chart analytics-monthly-chart">
+                  <ResponsiveContainer width="100%" height={285}>
+                    <BarChart data={data.monthlyConsistency} margin={{ top: 12, right: 14, left: -18, bottom: 0 }}>
+                      <CartesianGrid vertical={false} stroke="var(--chart-grid)" strokeDasharray="3 4" />
+                      <XAxis dataKey="label" tickLine={false} axisLine={false} minTickGap={18} tick={{ fill: 'var(--secondary)', fontSize: 11 }} />
+                      <YAxis allowDecimals={false} width={38} tickLine={false} axisLine={false} tick={{ fill: 'var(--secondary)', fontSize: 11 }} />
+                      <Tooltip
+                        contentStyle={tooltipStyle}
+                        labelFormatter={(_label, items) => items?.[0]?.payload?.label || ''}
+                        formatter={(value, _name, item) => [
+                          `${value} saved completion${value === 1 ? '' : 's'}${item.payload.hasTrackingData
+                            ? ` · ${item.payload.completionRate}% of ${item.payload.scheduledDays} scheduled habit-days`
+                            : ' · no scheduled tracking days'}`,
+                          'Monthly activity',
+                        ]}
+                      />
+                      <Bar dataKey="completions" name="Saved completions" fill="#8174BD" radius={[5, 5, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </>
+            ) : (
+              <div className="analytics-empty-state compact" role="status">
+                <strong>No monthly tracking data in this range</strong>
+                <p>Monthly activity appears for months with saved completions or scheduled habit-days.</p>
+              </div>
+            )}
           </section>
 
           <section className="analytics-lower-grid" aria-label="Habit performance and insights">

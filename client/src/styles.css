@@ -355,11 +355,11 @@ body { overflow-x: hidden; }
 .habit-meta span { background: #f6f6fb; border-radius: 999px; padding: 6px 10px; }
 
 .auth-page {
-  min-height: 100vh; display: grid; place-items: center; background: linear-gradient(135deg, var(--soft-lavender), #f8f6fb);
+  min-height: 100vh; min-height: 100dvh; display: grid; place-items: center; padding: 16px; background: linear-gradient(135deg, var(--soft-lavender), #f8f6fb);
 }
 
 .auth-card {
-  width: min(480px, calc(100vw - 32px));
+  width: min(480px, 100%);
   padding: 28px;
 }
 
@@ -994,6 +994,9 @@ body { overflow-x: hidden; }
 .analytics-period-chip, .analytics-sort-note { color: var(--secondary); background: var(--soft-lavender); border-radius: 999px; padding: 6px 10px; font-size: 0.7rem; white-space: nowrap; }
 .analytics-sort-note { background: transparent; padding: 0; text-align: right; white-space: normal; }
 .analytics-chart { width: 100%; height: 285px; }
+.analytics-monthly-panel { min-width: 0; }
+.analytics-monthly-caption { margin: 0 0 8px; color: var(--secondary); font-size: 0.78rem; }
+.analytics-monthly-chart { min-width: 0; }
 .analytics-donut-wrap { width: 100%; height: 210px; position: relative; }
 .analytics-donut-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: none; }
 .analytics-donut-center strong { font-size: 1.5rem; }
@@ -1038,6 +1041,32 @@ body { overflow-x: hidden; }
 .analytics-insight > span { font-size: 1.15rem; }
 .analytics-insight strong { font-size: 0.83rem; }
 .analytics-insight p { margin: 4px 0 0; color: var(--secondary); font-size: 0.75rem; }
+.app-notification {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: min(100%, 620px);
+  margin: 0 0 18px auto;
+  padding: 12px 14px;
+  border: 1px solid rgba(61, 122, 79, 0.28);
+  border-radius: 12px;
+  color: #285d38;
+  background: #edf7ef;
+  box-shadow: var(--shadow);
+}
+.app-notification > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.app-notification > button {
+  display: grid;
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  color: inherit;
+  background: transparent;
+}
+.app-notification > button:hover { background: rgba(61, 122, 79, 0.1); }
 :root[data-theme="dark"] .dashboard-stat-card,
 :root[data-theme="dark"] .dashboard-section,
 :root[data-theme="dark"] .analytics-panel { background: var(--card); }
@@ -1049,6 +1078,11 @@ body { overflow-x: hidden; }
 :root[data-theme="dark"] .analytics-insight.attention { background: rgba(78, 57, 34, 0.5); }
 :root[data-theme="dark"] .analytics-insight.pattern,
 :root[data-theme="dark"] .analytics-insight.tracking { background: var(--soft-lavender); }
+:root[data-theme="dark"] .app-notification {
+  border-color: rgba(134, 189, 150, 0.35);
+  color: #c6e8ce;
+  background: #1c3628;
+}
 
 @media (max-width: 1100px) {
   .dashboard-stats-grid, .analytics-metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -1061,6 +1095,8 @@ body { overflow-x: hidden; }
   .dashboard-main-grid, .dashboard-lower-grid, .analytics-chart-grid, .analytics-lower-grid { grid-template-columns: minmax(0, 1fr); }
   .dashboard-skeleton-grid, .analytics-skeleton-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .analytics-header { align-items: flex-start; flex-direction: column; }
+  .analytics-controls { align-items: stretch; flex-wrap: wrap; }
+  .analytics-export-button { justify-content: center; }
   .analytics-period-control { width: 100%; }
   .analytics-period-summary { flex-direction: column; gap: 3px; }
 }
@@ -1072,6 +1108,7 @@ body { overflow-x: hidden; }
   .dashboard-stat-copy > span { font-size: 0.69rem; }
   .dashboard-stat-copy > small { font-size: 0.63rem; }
   .analytics-panel-heading { align-items: flex-start; flex-direction: column; }
+  .app-notification { margin-bottom: 14px; padding: 10px; font-size: 0.86rem; }
   .analytics-sort-note { text-align: left; }
   .analytics-chart { height: 250px; }
   .habit-performance-row { gap: 7px; }
