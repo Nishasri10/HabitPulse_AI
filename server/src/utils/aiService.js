@@ -88,3 +88,41 @@ export async function generateCoachInsight({ user, summary, prompt }) {
     };
   }
 }
+
+export async function generateWeeklyReviewGuidance(review) {
+  const fallbackText = !review.scheduledOccurrences
+    ? '1. Review your current schedule. 2. Choose one small action for next week and give it a clear cue.'
+    : review.completedOccurrences === 0
+      ? '1. Choose one small, scheduled action for next week. 2. Put its cue somewhere you will notice it.'
+      : review.completionRate !== null && review.completionRate >= 80
+        ? '1. Keep the cues that supported your routine this week. 2. Repeat a similar schedule next week and change only what felt difficult.'
+        : '1. Choose one habit to simplify next week. 2. Attach its smallest version to a reliable cue and track that action.';
+
+  if (!env.geminiApiKey || env.nodeEnv === 'test') {
+    return { source: 'rule-based', text: fallbackText };
+  }
+
+  try {
+    const model = new GoogleGenerativeAI(env.geminiApiKey).getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const facts = [
+      `Completed habit occurrences: ${review.completedOccurrences}`,
+      `Completions on scheduled habit-days: ${review.completedScheduledOccurrences}`,
+      `Scheduled habit-days: ${review.scheduledOccurrences}`,
+      `Completion rate: ${review.completionRate === null ? 'not available' : `${review.completionRate}%`}`,
+      `At least one habit had three or more scheduled days: ${review.hasEnoughHabitHistory ? 'yes' : 'no'}`,
+      `Any habit was below 50% completion across at least three scheduled days: ${review.needsAttentionHabit ? 'yes' : 'no'}`,
+    ].join('\n');
+    const result = await model.generateContent({
+      contents: [{
+        role: 'user',
+        parts: [{
+          text: `Give 2 or 3 concise, practical suggestions for next week based only on these verified facts. Do not invent patterns, repeat numerical claims without context, or make medical claims. Do not ask for or reveal personal information.\n\n${facts}`,
+        }],
+      }],
+    });
+    const text = result?.response?.candidates?.[0]?.content?.parts?.map((part) => part.text).join(' ').trim();
+    return { source: text ? 'gemini' : 'rule-based', text: text || fallbackText };
+  } catch (error) {
+    return { source: 'rule-based', text: fallbackText, error: error.message };
+  }
+}

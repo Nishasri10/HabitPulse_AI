@@ -14,28 +14,57 @@ const getDateKey = (date) => {
 const formatMonthYear = (date) =>
   new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(date);
 
+const getHabitStartKey = (habit) => {
+  if (typeof habit.startDate === 'string') {
+    const match = habit.startDate.match(/^\d{4}-\d{2}-\d{2}/);
+    return match?.[0] || '';
+  }
+  const date = new Date(habit.startDate);
+  return Number.isNaN(date.getTime()) ? '' : getDateKey(date);
+};
+
+const getHabitDateKey = (date, habit) => {
+  const localMidday = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 12);
+  return getDateKeyForTimezone(localMidday, habit.timezone || 'UTC');
+};
+
+const getTodayKeyForHabit = (habit) => getDateKeyForTimezone(new Date(), habit.timezone || 'UTC');
+
+const isScheduledOnDate = (habit, dateKey) => {
+  const startKey = getHabitStartKey(habit);
+  if (habit.status !== 'active' || habit.archivedAt || !startKey || dateKey < startKey) return false;
+  if (habit.frequency === 'daily') return true;
+  const weekday = new Date(`${dateKey}T00:00:00.000Z`).getUTCDay();
+  return (habit.scheduledWeekdays || []).includes(weekday);
+};
+
 export default function CalendarPage() {
   const [currentMonth, setCurrentMonth] = useState(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [habits, setHabits] = useState([]);
   const [completionMap, setCompletionMap] = useState({});
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [reloadToken, setReloadToken] = useState(0);
 
   useEffect(() => {
     const load = async () => {
+      setLoading(true);
+      setError('');
       try {
         const { data } = await axios.get('/habits');
         setHabits(data.habits || []);
         setCompletionMap(data.completionMap || {});
-      } catch (error) {
-        console.error('Failed to load calendar data', error);
+      } catch (requestError) {
+        console.error('Failed to load calendar data', requestError);
+        setError(requestError.response?.data?.message || 'Unable to load calendar activity. Please try again.');
       } finally {
         setLoading(false);
       }
     };
 
     load();
-  }, []);
+  }, [reloadToken]);
 
   const monthDays = useMemo(() => {
     const start = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1);
@@ -46,9 +75,22 @@ export default function CalendarPage() {
   }, [currentMonth]);
 
   const selectedEntries = habits.filter((habit) => {
-    const habitDateKey = getDateKeyForTimezone(selectedDate, habit.timezone || 'UTC');
-    return completionMap[`${habit._id}:${habitDateKey}`];
+    const key = getHabitDateKey(selectedDate, habit);
+    return completionMap[`${habit._id}:${key}`];
   });
+  const selectedScheduledHabits = habits.filter((habit) => isScheduledOnDate(habit, getHabitDateKey(selectedDate, habit)));
+  const selectedIncompleteHabits = selectedScheduledHabits.filter(
+    (habit) => {
+      const dateKey = getHabitDateKey(selectedDate, habit);
+      return dateKey <= getTodayKeyForHabit(habit) && !completionMap[`${habit._id}:${dateKey}`];
+    }
+  );
+  const selectedUpcomingHabits = selectedScheduledHabits.filter(
+    (habit) => {
+      const dateKey = getHabitDateKey(selectedDate, habit);
+      return dateKey > getTodayKeyForHabit(habit) && !completionMap[`${habit._id}:${dateKey}`];
+    }
+  );
   const todayKey = getDateKey(new Date());
 
   const changeMonth = (direction) => {
@@ -80,9 +122,18 @@ export default function CalendarPage() {
           </div>
         </div>
 
+        {error && (
+          <div className="alert alert-danger d-flex justify-content-between align-items-center gap-3" role="alert">
+            <span>{error}</span>
+            <button type="button" className="btn btn-sm btn-outline-danger" onClick={() => setReloadToken((token) => token + 1)}>
+              Retry
+            </button>
+          </div>
+        )}
+
         {loading ? (
           <div className="text-muted">Loading calendar...</div>
-        ) : (
+        ) : !error && (
           <>
             <div className="calendar-grid">
               {weekDays.map((label) => (
@@ -90,37 +141,58 @@ export default function CalendarPage() {
               ))}
 
               {monthDays.map((date, index) => {
-                if (!date) {
-                  return <div key={`blank-${index}`} className="calendar-cell empty" />;
-                }
+                if (!date) return <div key={`blank-${index}`} className="calendar-cell empty" />;
 
                 const key = getDateKey(date);
-                const entries = habits.filter((habit) => {
-                  const habitDateKey = getDateKeyForTimezone(date, habit.timezone || 'UTC');
-                  return completionMap[`${habit._id}:${habitDateKey}`];
-                });
+                const entries = habits.filter((habit) => completionMap[`${habit._id}:${getHabitDateKey(date, habit)}`]);
+                const scheduledHabits = habits.filter((habit) => isScheduledOnDate(habit, getHabitDateKey(date, habit)));
+                const completedScheduledCount = scheduledHabits.filter(
+                  (habit) => completionMap[`${habit._id}:${getHabitDateKey(date, habit)}`]
+                ).length;
+                const progress = scheduledHabits.length
+                  ? Math.round((completedScheduledCount / scheduledHabits.length) * 100)
+                  : 0;
                 const isToday = key === todayKey;
                 const isSelected = key === getDateKey(selectedDate);
+                const completionDescription = completedScheduledCount > 0
+                  ? `${completedScheduledCount} of ${scheduledHabits.length} currently scheduled habits completed`
+                  : entries.length
+                    ? `${entries.length} saved completion${entries.length === 1 ? '' : 's'}`
+                    : '';
 
                 return (
                   <button
                     key={key}
                     type="button"
                     className={`calendar-cell ${isToday ? 'today' : ''} ${isSelected ? 'selected' : ''}`}
-                    aria-label={`${new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric', year: 'numeric' }).format(date)}${entries.length ? `, ${entries.length} completed habits` : ''}`}
+                    aria-label={`${new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric', year: 'numeric' }).format(date)}${completionDescription ? `, ${completionDescription}` : ''}`}
                     aria-pressed={isSelected}
                     onClick={() => setSelectedDate(date)}
                   >
                     <div className="date-number">{date.getDate()}</div>
-                    {entries.length > 0 ? (
-                      <span className="completion-pill" title={entries.map((habit) => habit.name).join(', ')}>
-                        {entries.slice(0, 3).map((habit) => getHabitEmoji(habit)).join(' ')}
-                        {entries.length > 3 ? ` +${entries.length - 3}` : ''}
-                      </span>
+                    {completedScheduledCount > 0 ? (
+                      <span
+                        className="calendar-progress-ring"
+                        style={{ '--completion-progress': `${progress}%` }}
+                        aria-hidden="true"
+                        title={completionDescription}
+                      />
+                    ) : entries.length > 0 ? (
+                      <span
+                        className="calendar-activity-dot"
+                        aria-hidden="true"
+                        title={`${entries.length} saved completion${entries.length === 1 ? '' : 's'}`}
+                      />
                     ) : null}
                   </button>
                 );
               })}
+            </div>
+
+            <div className="calendar-legend" aria-label="Calendar legend">
+              <span><i className="calendar-progress-ring legend-ring" aria-hidden="true" /> Completion progress</span>
+              <span><i className="calendar-today-key" aria-hidden="true" /> Today</span>
+              <span><i className="calendar-selected-key" aria-hidden="true" /> Selected date</span>
             </div>
 
             <div className="calendar-detail-card mt-4">
@@ -129,22 +201,56 @@ export default function CalendarPage() {
                 <span className="calendar-badge">{selectedEntries.length} completion{selectedEntries.length === 1 ? '' : 's'}</span>
               </div>
 
-              {selectedEntries.length > 0 ? (
+              {selectedEntries.length || selectedIncompleteHabits.length || selectedUpcomingHabits.length ? (
                 <div className="calendar-entry-list">
-                  {selectedEntries.map((habit) => (
-                    <div key={habit._id} className="calendar-entry-item">
-                      <span className="calendar-entry-emoji" aria-hidden="true">{getHabitEmoji(habit)}</span>
-                      <div>
-                        <strong>{habit.name}</strong>
-                        <div className="text-muted small">{habit.category || 'General'} • {habit.frequency}</div>
-                      </div>
-                    </div>
-                  ))}
+                  {selectedEntries.length > 0 && (
+                    <>
+                      <h6 className="calendar-entry-heading">Completed</h6>
+                      {selectedEntries.map((habit) => (
+                        <div key={habit._id} className="calendar-entry-item completed">
+                          <span className="calendar-entry-emoji" aria-hidden="true">{getHabitEmoji(habit)}</span>
+                          <div className="calendar-entry-copy">
+                            <strong>{habit.name}</strong>
+                            <div className="text-muted small">{habit.category || 'General'} • {habit.frequency}</div>
+                          </div>
+                          <span className="calendar-entry-status">Completed</span>
+                        </div>
+                      ))}
+                    </>
+                  )}
+                  {selectedIncompleteHabits.length > 0 && (
+                    <>
+                      <h6 className="calendar-entry-heading">Scheduled, not completed</h6>
+                      {selectedIncompleteHabits.map((habit) => (
+                        <div key={habit._id} className="calendar-entry-item incomplete">
+                          <span className="calendar-entry-emoji" aria-hidden="true">{getHabitEmoji(habit)}</span>
+                          <div className="calendar-entry-copy">
+                            <strong>{habit.name}</strong>
+                            <div className="text-muted small">{habit.category || 'General'} • {habit.frequency}</div>
+                          </div>
+                          <span className="calendar-entry-status">Not completed</span>
+                        </div>
+                      ))}
+                    </>
+                  )}
+                  {selectedUpcomingHabits.length > 0 && (
+                    <>
+                      <h6 className="calendar-entry-heading">Scheduled for this date</h6>
+                      {selectedUpcomingHabits.map((habit) => (
+                        <div key={habit._id} className="calendar-entry-item upcoming">
+                          <span className="calendar-entry-emoji" aria-hidden="true">{getHabitEmoji(habit)}</span>
+                          <div className="calendar-entry-copy">
+                            <strong>{habit.name}</strong>
+                            <div className="text-muted small">{habit.category || 'General'} • {habit.frequency}</div>
+                          </div>
+                          <span className="calendar-entry-status">Upcoming</span>
+                        </div>
+                      ))}
+                    </>
+                  )}
                 </div>
               ) : (
-                <div className="empty-state">
-                  No habits were completed on this date yet. Mark one as complete to build your streak.
-                </div>
+                <div className="empty-state">No saved completion or scheduled habit activity for this date.</div>
               )}
             </div>
           </>

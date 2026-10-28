@@ -1,6 +1,6 @@
 import { NavLink, useNavigate, Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { Home, ListTodo, Calendar, BarChart3, Sparkles, UserCircle, LogOut, Menu, X } from 'lucide-react';
+import { Home, ListTodo, Calendar, BarChart3, Sparkles, UserCircle, LogOut, Menu, X, Moon, Sun } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import MotivationalPopup from './MotivationalPopup';
 
@@ -14,10 +14,11 @@ const navItems = [
 ];
 
 export default function Layout({ children }) {
-  const { user, logout } = useAuth();
+  const { user, logout, theme, setTheme } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [themeError, setThemeError] = useState('');
   const menuToggleRef = useRef(null);
   const navRef = useRef(null);
 
@@ -37,6 +38,16 @@ export default function Layout({ children }) {
   const handleLogout = async () => {
     await logout();
     navigate('/login');
+  };
+
+  const toggleTheme = async () => {
+    const nextTheme = theme === 'dark' ? 'light' : 'dark';
+    setThemeError('');
+    try {
+      await setTheme(nextTheme);
+    } catch (error) {
+      setThemeError(error.response?.data?.message || 'Theme changed for this session, but could not be saved to your account.');
+    }
   };
 
   return (
@@ -93,8 +104,22 @@ export default function Layout({ children }) {
             <span className="eyebrow">Habit tracker</span>
             <h1 className="page-title mb-0">Your momentum</h1>
           </div>
-          <Link to="/habits/new" className="btn btn-primary btn-sm rounded-pill">+ Add Habit</Link>
+          <div className="topbar-actions">
+            <button
+              type="button"
+              className="theme-toggle"
+              onClick={toggleTheme}
+              aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+              aria-pressed={theme === 'dark'}
+              title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+            >
+              {theme === 'dark' ? <Sun size={17} aria-hidden="true" /> : <Moon size={17} aria-hidden="true" />}
+              <span>{theme === 'dark' ? 'Light mode' : 'Dark mode'}</span>
+            </button>
+            <Link to="/habits/new" className="btn btn-primary btn-sm rounded-pill">+ Add Habit</Link>
+          </div>
         </header>
+        {themeError && <div className="alert alert-warning py-2" role="alert">{themeError}</div>}
         {children}
       </main>
       {menuOpen && <button type="button" className="mobile-nav-backdrop" aria-label="Close navigation menu" onClick={() => setMenuOpen(false)} />}

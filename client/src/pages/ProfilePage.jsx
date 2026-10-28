@@ -1,15 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 
-const defaultTheme = 'light';
-
 export default function ProfilePage() {
-  const { user, updateProfile, changePassword } = useAuth();
+  const { user, theme, setTheme, updateProfile, changePassword } = useAuth();
   const [name, setName] = useState(user?.name || '');
   const [timezone, setTimezone] = useState(user?.timezone || 'UTC');
-  const [theme, setTheme] = useState(user?.preferences?.theme || defaultTheme);
   const [remindersEnabled, setRemindersEnabled] = useState(user?.preferences?.remindersEnabled ?? true);
   const [saving, setSaving] = useState(false);
+  const [savingTheme, setSavingTheme] = useState(false);
   const [savingPassword, setSavingPassword] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
   const [passwordForm, setPasswordForm] = useState({
@@ -21,13 +19,24 @@ export default function ProfilePage() {
   useEffect(() => {
     setName(user?.name || '');
     setTimezone(user?.timezone || 'UTC');
-    setTheme(user?.preferences?.theme || defaultTheme);
     setRemindersEnabled(user?.preferences?.remindersEnabled ?? true);
   }, [user]);
 
-  useEffect(() => {
-    document.body.dataset.theme = theme;
-  }, [theme]);
+  const handleThemeChange = async (nextTheme) => {
+    setSavingTheme(true);
+    setMessage({ type: '', text: '' });
+    try {
+      await setTheme(nextTheme);
+      setMessage({ type: 'success', text: 'Theme preference saved.' });
+    } catch (error) {
+      setMessage({
+        type: 'error',
+        text: error.response?.data?.message || 'Theme changed for this session, but could not be saved to your account.',
+      });
+    } finally {
+      setSavingTheme(false);
+    }
+  };
 
   const save = async (event) => {
     event.preventDefault();
@@ -111,8 +120,14 @@ export default function ProfilePage() {
               </div>
 
               <div className="mb-3">
-                <label className="form-label">Theme</label>
-                <select className="form-select" value={theme} onChange={(e) => setTheme(e.target.value)}>
+                <label className="form-label" htmlFor="themePreference">Theme</label>
+                <select
+                  id="themePreference"
+                  className="form-select"
+                  value={theme}
+                  onChange={(event) => handleThemeChange(event.target.value)}
+                  disabled={savingTheme}
+                >
                   <option value="light">Light</option>
                   <option value="dark">Dark</option>
                 </select>

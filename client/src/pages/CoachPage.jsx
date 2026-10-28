@@ -1,5 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
+import { useAuth } from '../context/AuthContext';
+import { getDateKeyForTimezone } from '../utils/habitPresentation';
 
 const suggestedQuestions = [
   'How can I build a habit consistently?',
@@ -17,9 +19,41 @@ const suggestedQuestions = [
 ];
 
 export default function CoachPage() {
+  const { user } = useAuth();
   const [prompt, setPrompt] = useState('');
   const [conversation, setConversation] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [reviewDate, setReviewDate] = useState(getDateKeyForTimezone(new Date(), user?.timezone || 'UTC'));
+  const [review, setReview] = useState(null);
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const [reviewError, setReviewError] = useState('');
+
+  useEffect(() => {
+    if (!reviewOpen) return undefined;
+    const controller = new AbortController();
+    const loadReview = async () => {
+      setReviewLoading(true);
+      setReview(null);
+      setReviewError('');
+      try {
+        const { data } = await axios.get('/analytics/weekly-review', {
+          params: { date: reviewDate },
+          signal: controller.signal,
+        });
+        setReview(data);
+      } catch (requestError) {
+        if (!axios.isCancel(requestError)) {
+          setReviewError(requestError.response?.data?.message || 'Unable to load your weekly review.');
+        }
+      } finally {
+        if (!controller.signal.aborted) setReviewLoading(false);
+      }
+    };
+
+    loadReview();
+    return () => controller.abort();
+  }, [reviewOpen, reviewDate]);
 
   const askCoach = async (question) => {
     const cleanPrompt = question?.trim();
@@ -60,6 +94,80 @@ export default function CoachPage() {
     <div className="page-shell">
       <div className="card p-4">
         <h3 className="mb-3">AI Coach</h3>
+
+        <section className="weekly-review">
+          <div className="weekly-review-toolbar">
+            <div>
+              <h4>Weekly review</h4>
+              <p>Review saved completions and get practical next-week guidance.</p>
+            </div>
+            <button
+              type="button"
+              className="btn btn-outline-primary"
+              onClick={() => setReviewOpen((open) => !open)}
+              aria-expanded={reviewOpen}
+            >
+              {reviewOpen ? 'Hide weekly review' : 'Review a week'}
+            </button>
+          </div>
+          {reviewOpen && (
+            <div className="weekly-review-content">
+              <label className="weekly-review-date">
+                <span>Choose a date in the week</span>
+                <input
+                  type="date"
+                  className="form-control"
+                  value={reviewDate}
+                  max={getDateKeyForTimezone(new Date(), user?.timezone || 'UTC')}
+                  onChange={(event) => setReviewDate(event.target.value)}
+                />
+              </label>
+              {reviewError && <div className="alert alert-danger" role="alert">{reviewError}</div>}
+              {reviewLoading ? (
+                <div className="text-muted" role="status">Preparing your review...</div>
+              ) : review && (
+                <>
+                  <div className="weekly-review-period">
+                    Week of {review.weekStartKey} – {review.weekEndKey}
+                  </div>
+                  {review.activeHabits ? (
+                    <>
+                      <div className="weekly-review-stats">
+                        <div><strong>{review.completedOccurrences}</strong><span>saved completions</span></div>
+                        <div><strong>{review.completionRate === null ? '—' : `${review.completionRate}%`}</strong><span>
+                          {review.completedScheduledOccurrences} of {review.scheduledOccurrences} scheduled habit-days
+                        </span></div>
+                        <div><strong>{review.mostConsistentHabit || '—'}</strong><span>
+                          {review.mostConsistentHabit ? `Most consistent · ${review.mostConsistentRate}%` : 'Not enough scheduled history to compare'}
+                        </span></div>
+                      </div>
+                      {review.needsAttentionHabit && (
+                        <p className="weekly-review-attention">
+                          <strong>Could use a smaller step:</strong> {review.needsAttentionHabit} was completed on fewer than half of its scheduled days (at least three scheduled days observed).
+                        </p>
+                      )}
+                      <div className="weekly-review-guidance">
+                        <div className="weekly-review-guidance-title">
+                          <strong>Suggestions for next week</strong>
+                          <span>{review.guidanceSource === 'gemini' ? 'Gemini guidance' : 'Local guidance'}</span>
+                        </div>
+                        <p>{review.guidance}</p>
+                      </div>
+                      <small className="weekly-review-caveat">
+                        Completion rate uses scheduled days for currently active habits. Past schedule edits are not versioned.
+                      </small>
+                    </>
+                  ) : (
+                    <div className="analytics-empty-state compact">
+                      <strong>No active habits to review</strong>
+                      <p>Add or activate a habit to begin a useful weekly review.</p>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </section>
 
         <div className="mb-4">
           <h6 className="mb-3">Suggested Questions</h6>
